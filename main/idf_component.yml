@@ -1,0 +1,7 @@
+## Display: ST77916 (Waveshare ESP32-S3 1.85" Round 360x360)
+## Touch: CST816 (触屏版 TP_SDA=1, TP_SCL=3, TP_INT=4)
+## LVGL port: task + timer, add display + touch
+dependencies:
+  espressif/esp_lcd_st77916: "^2.0.2"
+  espressif/esp_lvgl_port: "^2.7.0"
+  espressif/esp_lcd_touch_cst816s: "*"

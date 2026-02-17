@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/Users/zhangziyu/Documents/desk_ai/build/CMakeFiles/bootloader
+/Users/zhangziyu/Documents/desk_ai/build/CMakeFiles/bootloader.rule
+/Users/zhangziyu/Documents/desk_ai/build/CMakeFiles/bootloader-complete.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/Users/zhangziyu/Documents/desk_ai/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

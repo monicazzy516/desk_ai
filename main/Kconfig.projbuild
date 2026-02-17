@@ -1,0 +1,21 @@
+menu "Desk AI"
+
+    config ESP_WIFI_SSID
+        string "WiFi SSID"
+        default "your_ssid"
+        help
+            SSID of the AP to connect to.
+
+    config ESP_WIFI_PASSWORD
+        string "WiFi Password"
+        default "your_password"
+        help
+            Password of the AP.
+
+    config BACKEND_URL
+        string "Backend URL (POST)"
+        default "http://192.168.4.1:5001/chat"
+        help
+            URL of the backend server (e.g. http://PC_IP:5001/chat). Use 5001 to avoid macOS AirPlay on 5000.
+
+endmenu

@@ -1,0 +1,26 @@
+idf_component_register(
+    SRCS
+        "desk_ai.c"
+        "audio.c"
+        "backend.c"
+        "state.c"
+        "ui.c"
+        "wifi.c"
+        "EXIO/TCA9554PWR.c"
+    INCLUDE_DIRS
+        "."
+        "EXIO"
+    REQUIRES
+        esp_lcd_st77916
+        esp_lvgl_port
+        esp_lcd_touch_cst816s
+        esp_driver_i2s
+        esp_http_client
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
+        driver
+    PRIV_REQUIRES
+        esp_timer
+)
