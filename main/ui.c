@@ -36,7 +36,6 @@ static lv_display_t *disp_handle = NULL;
 static lv_obj_t *screen = NULL;
 static lv_obj_t *state_label = NULL;   /* 当前 state 名称，便于 debug */
 static lv_obj_t *reply_label = NULL;   /* SPEAKING 时显示后端 reply_text */
-static i2c_master_bus_handle_t s_i2c_bus = NULL;  /* I2C 总线（触屏+TCA9554共用）*/
 
 static bool panel_io_cb(esp_lcd_panel_io_handle_t panel_io,
                         esp_lcd_panel_io_event_data_t *edata,
@@ -123,17 +122,18 @@ void display_init(void)
     disp_handle = lvgl_port_add_disp(&disp_cfg);
 
     /* 触屏：CST816 I2C → LVGL input */
+    i2c_master_bus_handle_t tp_i2c = NULL;
     i2c_master_bus_config_t i2c_bus_cfg = {
         .i2c_port = I2C_NUM_0,
         .sda_io_num = TP_I2C_SDA,
         .scl_io_num = TP_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
     };
-    if (i2c_new_master_bus(&i2c_bus_cfg, &s_i2c_bus) == ESP_OK) {
+    if (i2c_new_master_bus(&i2c_bus_cfg, &tp_i2c) == ESP_OK) {
         esp_lcd_panel_io_handle_t tp_io = NULL;
         esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG();
         tp_io_cfg.scl_speed_hz = 400000;
-        if (esp_lcd_new_panel_io_i2c(s_i2c_bus, &tp_io_cfg, &tp_io) == ESP_OK) {
+        if (esp_lcd_new_panel_io_i2c(tp_i2c, &tp_io_cfg, &tp_io) == ESP_OK) {
             esp_lcd_touch_handle_t tp_handle = NULL;
             esp_lcd_touch_config_t tp_cfg = {
                 .x_max = LCD_H_RES,
@@ -265,9 +265,4 @@ void ui_update(device_state_t state)
         }
     }
     lvgl_port_unlock();
-}
-
-i2c_master_bus_handle_t ui_get_i2c_bus(void)
-{
-    return s_i2c_bus;
 }

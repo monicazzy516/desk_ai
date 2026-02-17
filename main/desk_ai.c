@@ -7,7 +7,6 @@
 #include "ui.h"
 #include "wifi.h"
 #include "backend.h"
-#include "EXIO/TCA9554PWR.h"
 
 static void startup_task(void *arg)
 {
@@ -28,19 +27,7 @@ void app_main(void)
 {
     ESP_LOGI("DESK_AI", "Device booted");
 
-    display_init();  // 初始化显示和 I2C
-    
-    // 初始化 TCA9554 GPIO 扩展芯片（麦克风可能需要）
-    i2c_master_bus_handle_t i2c_bus = ui_get_i2c_bus();
-    if (i2c_bus) {
-        esp_err_t ret = EXIO_Init(i2c_bus);
-        if (ret == ESP_OK) {
-            ESP_LOGI("DESK_AI", "TCA9554 initialized");
-        } else {
-            ESP_LOGW("DESK_AI", "TCA9554 init failed: %s", esp_err_to_name(ret));
-        }
-    }
-    
+    display_init();
     state_init();
     ui_init();
 

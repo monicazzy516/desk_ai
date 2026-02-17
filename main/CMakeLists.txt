@@ -6,10 +6,8 @@ idf_component_register(
         "state.c"
         "ui.c"
         "wifi.c"
-        "EXIO/TCA9554PWR.c"
     INCLUDE_DIRS
         "."
-        "EXIO"
     REQUIRES
         esp_lcd_st77916
         esp_lvgl_port

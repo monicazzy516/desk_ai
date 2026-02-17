@@ -10,29 +10,19 @@
 
 static const char *TAG = "AUDIO";
 
-/* 板载 MIC：尝试 MSB 模式（BCK=15, WS=2, DATA=39）*/
+/* 板载 MIC：MIC_SCK=15, MIC_WS=2, MIC_SD=39 */
 #define I2S_MIC_BCK_IO    GPIO_NUM_15
 #define I2S_MIC_WS_IO     GPIO_NUM_2
 #define I2S_MIC_DATA_IO   GPIO_NUM_39
-
-/* 麦克风调试配置：如果录制失败，尝试以下选项
- * 1. 修改 SLOT: I2S_STD_SLOT_RIGHT 改为 I2S_STD_SLOT_LEFT 或 I2S_STD_SLOT_BOTH
- * 2. 修改格式: I2S_STD_PHILIPS 改为 I2S_STD_MSB 或 I2S_COMM_FORMAT_STAND_I2S
- * 3. 尝试 PDM 模式: 使用 i2s_channel_init_pdm_rx_mode() 代替标准 I2S
- * 4. 检查 WS 信号是否需要反转: invert_flags.ws_inv = 1
- */
-/* 快速切换配置：取消注释以尝试不同的 slot */
-#define USE_LEFT_SLOT   1   /* 尝试 LEFT slot（最常见）*/
-// #define USE_BOTH_SLOTS  1   /* 取消注释尝试 BOTH slots */
 /* PCM5101 扬声器：Speak_BCK=48, Speak_LRCK=38, Speak_DIN=47 */
 #define I2S_SPK_BCK_IO    GPIO_NUM_48
 #define I2S_SPK_WS_IO     GPIO_NUM_38
 #define I2S_SPK_DATA_IO   GPIO_NUM_47
 
-#define SAMPLE_RATE_HZ      16000   /* 16kHz：语音识别标准，节省 3 倍空间 */
-/* 8MB PSRAM：缓冲区放 PSRAM，最长约 60s；仅由用户点击停止或录满结束 */
-#define MAX_RECORD_SAMPLES   (960000u)  /* 60s @ 16kHz = 1.92MB（可改更大，例如 2MB=62.5s）*/
-#define MIN_RECORD_SAMPLES   (3200u)    /* 至少 0.2s 再响应停止（16kHz 下 = 3200 samples）*/
+#define SAMPLE_RATE_HZ      48000
+/* 8MB PSRAM：缓冲区放 PSRAM，最长约 10s；仅由用户点击停止或录满结束 */
+#define MAX_RECORD_SAMPLES   (480000u)  /* 10s @ 48kHz = 960KB */
+#define MIN_RECORD_SAMPLES   (9600u)    /* 至少 0.2s 再响应停止，避免误触 0 samples */
 #define RECORD_BUF_BYTES     (MAX_RECORD_SAMPLES * sizeof(int16_t))
 #define CHUNK_SAMPLES        1024
 #define CHUNK_BYTES          (CHUNK_SAMPLES * sizeof(int16_t))
@@ -68,10 +58,13 @@ static void record_task(void *arg)
         return;
     }
 
-    /* 官方配置：32位数据宽度 + RIGHT slot（麦克风输出32位，有效位在高位）*/
+    /* 单声道麦克风在 RIGHT 声道：明确指定 slot_mask 只读 RIGHT */
+    i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+    slot_cfg.slot_mask = I2S_STD_SLOT_RIGHT;  /* 麦克风数据在 WS=HIGH 时输出 */
+    
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE_HZ),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = slot_cfg,
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = I2S_MIC_BCK_IO,
@@ -81,24 +74,10 @@ static void record_task(void *arg)
             .invert_flags = { 0 },
         },
     };
-    /* 根据配置选择 slot */
-#if defined(USE_LEFT_SLOT)
-    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
-    ESP_LOGI(TAG, "I2S MIC config: BCK=%d WS=%d DATA=%d, 32bit, LEFT slot, %dHz", 
-             I2S_MIC_BCK_IO, I2S_MIC_WS_IO, I2S_MIC_DATA_IO, SAMPLE_RATE_HZ);
-#elif defined(USE_BOTH_SLOTS)
-    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
-    ESP_LOGI(TAG, "I2S MIC config: BCK=%d WS=%d DATA=%d, 32bit, BOTH slots, %dHz", 
-             I2S_MIC_BCK_IO, I2S_MIC_WS_IO, I2S_MIC_DATA_IO, SAMPLE_RATE_HZ);
-#else
-    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_RIGHT;
-    ESP_LOGI(TAG, "I2S MIC config: BCK=%d WS=%d DATA=%d, 32bit, RIGHT slot, %dHz", 
-             I2S_MIC_BCK_IO, I2S_MIC_WS_IO, I2S_MIC_DATA_IO, SAMPLE_RATE_HZ);
-#endif
 
     ret = i2s_channel_init_std_mode(rx_handle, &std_cfg);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_channel_init_std_mode (32bit) failed %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "i2s_channel_init_std_mode failed %s", esp_err_to_name(ret));
         i2s_del_channel(rx_handle);
         xEventGroupSetBits(s_ev, RECORD_DONE_BIT);
         vTaskDelete(NULL);
@@ -114,43 +93,23 @@ static void record_task(void *arg)
         return;
     }
 
-    /* I2S 启用后等待麦克风稳定（重要！）*/
-    ESP_LOGI(TAG, "I2S enabled, waiting for MIC to stabilize...");
-    vTaskDelay(pdMS_TO_TICKS(100));  /* 等待 100ms */
-    
-    /* 丢弃前几次读取的数据（可能包含噪声/不稳定数据）*/
-    static int32_t dummy_buf[CHUNK_SAMPLES];
-    for (int i = 0; i < 3; i++) {
-        size_t dummy_read = 0;
-        i2s_channel_read(rx_handle, dummy_buf, CHUNK_SAMPLES * sizeof(int32_t), &dummy_read, pdMS_TO_TICKS(100));
-    }
-    ESP_LOGI(TAG, "MIC warm-up complete, starting recording...");
-
-    /* 读取32位数据，转换为16位（官方方法：右移14位提取有效位）*/
-    static int32_t i32_chunk[CHUNK_SAMPLES];  /* 临时缓冲：32位数据 */
+    /* MONO 模式 + RIGHT slot：驱动只返回 RIGHT 声道数据（单声道流） */
     uint32_t total_samples = 0;
     
     while ((!s_stop_requested || total_samples < MIN_RECORD_SAMPLES) && total_samples < MAX_RECORD_SAMPLES) {
-        size_t to_read_bytes = CHUNK_SAMPLES * sizeof(int32_t);  /* 32位数据 */
+        size_t to_read = CHUNK_BYTES;
         if (total_samples + CHUNK_SAMPLES > MAX_RECORD_SAMPLES) {
-            uint32_t remaining = MAX_RECORD_SAMPLES - total_samples;
-            to_read_bytes = remaining * sizeof(int32_t);
+            to_read = (MAX_RECORD_SAMPLES - total_samples) * sizeof(int16_t);
         }
         
         size_t bytes_read = 0;
-        ret = i2s_channel_read(rx_handle, i32_chunk, to_read_bytes, &bytes_read, pdMS_TO_TICKS(100));
+        ret = i2s_channel_read(rx_handle, &s_record_buf[total_samples], to_read, &bytes_read, pdMS_TO_TICKS(100));
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "i2s_channel_read (32bit) failed: %s (total_samples=%lu). Check MIC pins: BCK=%d WS=%d DATA=%d",
+            ESP_LOGE(TAG, "i2s_channel_read failed: %s (total_samples=%lu). Check MIC pins: BCK=%d WS=%d DIN=%d",
                      esp_err_to_name(ret), (unsigned long)total_samples, I2S_MIC_BCK_IO, I2S_MIC_WS_IO, I2S_MIC_DATA_IO);
             break;
         }
-        
-        /* 转换32位→16位：右移14位提取有效位（bit 29:13）*/
-        uint32_t samples_read = (uint32_t)(bytes_read / sizeof(int32_t));
-        for (uint32_t i = 0; i < samples_read; i++) {
-            s_record_buf[total_samples + i] = (int16_t)(i32_chunk[i] >> 14);
-        }
-        total_samples += samples_read;
+        total_samples += (uint32_t)(bytes_read / sizeof(int16_t));
     }
 
     i2s_channel_disable(rx_handle);

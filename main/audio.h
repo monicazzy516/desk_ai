@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define AUDIO_SAMPLE_RATE_HZ  16000  /* 16kHz：语音识别标准采样率 */
+#define AUDIO_SAMPLE_RATE_HZ  48000
 
 /**
  * 在 STATE_LISTENING 时调用：启动 I2S，连续录 PCM 到内部缓冲区。
