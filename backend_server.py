@@ -10,6 +10,10 @@ import struct
 import uuid
 from datetime import datetime
 from flask import Flask, request, jsonify, Response
+from dotenv import load_dotenv
+
+# 加载 .env 文件中的环境变量
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -100,7 +104,7 @@ def _stt_whisper(wav_path: str, duration_sec: float = 0) -> str:
             transcription = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
-                language="en",  # 指定语言减少误检与幻觉（如 "Subs by www.zeoranger.co.uk"）
+                language="en",  # 指定英文语言减少误检与幻觉
                 prompt="Transcribe the following speech in English.",
             )
         text = (transcription.text or "").strip()
