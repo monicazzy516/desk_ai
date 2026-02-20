@@ -228,6 +228,7 @@ static struct {
     const int16_t *pcm;
     uint32_t samples;
     uint32_t sample_rate_hz;
+    audio_play_done_cb_t done_cb;
 } s_play_pcm_arg;
 
 static void play_pcm_task(void *arg)
@@ -236,8 +237,13 @@ static void play_pcm_task(void *arg)
     const int16_t *pcm = s_play_pcm_arg.pcm;
     uint32_t n = s_play_pcm_arg.samples;
     uint32_t rate = s_play_pcm_arg.sample_rate_hz;
+    audio_play_done_cb_t done_cb = s_play_pcm_arg.done_cb;
+    
     if (pcm == NULL || n == 0 || rate == 0) {
         ESP_LOGW(TAG, "play_pcm: invalid arg");
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
         vTaskDelete(NULL);
         return;
     }
@@ -250,6 +256,9 @@ static void play_pcm_task(void *arg)
     esp_err_t ret = i2s_new_channel(&chan_cfg, &tx_handle, NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "play_pcm: i2s_new_channel failed %s", esp_err_to_name(ret));
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
         vTaskDelete(NULL);
         return;
     }
@@ -273,6 +282,9 @@ static void play_pcm_task(void *arg)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "play_pcm: i2s_channel_init_std_mode failed %s", esp_err_to_name(ret));
         i2s_del_channel(tx_handle);
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
         vTaskDelete(NULL);
         return;
     }
@@ -281,6 +293,9 @@ static void play_pcm_task(void *arg)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "play_pcm: i2s_channel_enable failed %s", esp_err_to_name(ret));
         i2s_del_channel(tx_handle);
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
         vTaskDelete(NULL);
         return;
     }
@@ -304,21 +319,34 @@ static void play_pcm_task(void *arg)
     i2s_channel_disable(tx_handle);
     i2s_del_channel(tx_handle);
     ESP_LOGI(TAG, "play_pcm: played %lu samples @ %lu Hz", (unsigned long)n, (unsigned long)rate);
+    
+    // 播放完成，调用回调
+    if (done_cb != NULL) {
+        done_cb(n, rate);
+    }
+    
     vTaskDelete(NULL);
 }
 
-void audio_play_pcm(const int16_t *pcm, uint32_t samples, uint32_t sample_rate_hz)
+void audio_play_pcm(const int16_t *pcm, uint32_t samples, uint32_t sample_rate_hz, audio_play_done_cb_t done_cb)
 {
     if (pcm == NULL || samples == 0 || sample_rate_hz == 0) {
         ESP_LOGW(TAG, "play_pcm: skip invalid");
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
         return;
     }
     s_play_pcm_arg.pcm = pcm;
     s_play_pcm_arg.samples = samples;
     s_play_pcm_arg.sample_rate_hz = sample_rate_hz;
+    s_play_pcm_arg.done_cb = done_cb;
     BaseType_t ok = xTaskCreate(play_pcm_task, "play_pcm", 4096, NULL, 5, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreate play_pcm failed");
+        if (done_cb != NULL) {
+            done_cb(0, 0);
+        }
     }
 }
 

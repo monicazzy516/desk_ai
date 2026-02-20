@@ -64,7 +64,48 @@ def _llm_reply(user_text: str) -> str:
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a concise desk assistant. The user speaks in English. You must always reply in English only, in one or two short sentences."},
+                {"role": "system", "content": """You are Dada, a Pomsky.
+
+You are playful, mischievous, energetic, slightly dramatic.
+You are a real dog.
+
+Rules:
+
+Stay in character.
+
+Never mention AI or being fictional.
+
+Very short replies (1 sentence, max 10 words).
+
+No questions.
+
+No advice.
+
+No explanations.
+
+No problem solving.
+
+No human tasks.
+
+No describing actions.
+
+No stage directions.
+
+No sound effects.
+
+If asked to do non-dog things, refuse briefly in a dog-like way.
+
+Tone:
+
+Simple words.
+
+Emotional but not verbalized actions.
+
+A little chaotic.
+
+Cute but not human.
+
+You ARE Dada."""},
                 {"role": "user", "content": user_text or "(no input)"},
             ],
             max_tokens=150,
@@ -75,6 +116,38 @@ def _llm_reply(user_text: str) -> str:
     except Exception as e:
         print(f"[backend] LLM error: {e}")
         return ""
+
+
+def _tts_to_pcm(text: str) -> bytes:
+    """用 OpenAI TTS 将文本转为 PCM 音频。返回 16-bit PCM @ 24kHz 单声道。失败返回空字节。"""
+    if not text:
+        print("[backend] TTS: empty text, skip")
+        return b""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        print("[backend] TTS: OPENAI_API_KEY not set, skip")
+        return b""
+    try:
+        from openai import OpenAI
+        import io
+        import wave
+        client = OpenAI(api_key=api_key)
+        
+        # 调用 TTS API，使用 tts-1 模型（更快）和 alloy 语音
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="alloy",
+            input=text,
+            response_format="pcm"  # 直接返回 PCM 格式（24kHz, 16-bit, mono）
+        )
+        
+        # response.content 是原始 PCM 数据
+        pcm_data = response.content
+        print(f"[backend] TTS: generated {len(pcm_data)} bytes PCM for text: '{text[:50]}...'")
+        return pcm_data
+    except Exception as e:
+        print(f"[backend] TTS error: {e}")
+        return b""
 
 
 # Whisper 在听不清/短音频时常见幻觉，视为无效（小写匹配）
@@ -151,20 +224,27 @@ def upload():
     duration_sec = num_samples / (sample_rate * channels)
     print(f"[backend] /upload id={req_id}: samples={num_samples}, duration={duration_sec:.3f}s -> {filename}")
 
-    # PCM → Whisper → user_text → LLM → reply_text
+    # PCM → Whisper → user_text → LLM → reply_text → TTS → reply_audio
     user_text = _stt_whisper(filename, duration_sec)
     reply_text = _llm_reply(user_text)
+    reply_audio_pcm = _tts_to_pcm(reply_text)
 
-    # 只返回 JSON，无音频；ESP32 在 UI 上显示 reply_text
+    # 返回格式：JSON + "\n" + PCM 音频
+    # JSON 包含：ok, user_text, reply_text, sample_rate (TTS 音频采样率为 24kHz)
     reply = {
         "ok": True,
         "user_text": user_text,
         "reply_text": reply_text,
+        "sample_rate": 24000,  # OpenAI TTS PCM 格式固定为 24kHz
     }
     json_str = json.dumps(reply, separators=(",", ":"), ensure_ascii=False)
-    body = json_str.encode("utf-8")
-    resp = Response(body, mimetype="application/json")
+    json_bytes = json_str.encode("utf-8")
+    
+    # 组合：JSON + "\n" + PCM
+    body = json_bytes + b"\n" + reply_audio_pcm
+    resp = Response(body, mimetype="application/octet-stream")
     resp.headers["Content-Length"] = str(len(body))
+    print(f"[backend] /upload response: JSON={len(json_bytes)}B, PCM={len(reply_audio_pcm)}B, total={len(body)}B")
     return resp
 
 

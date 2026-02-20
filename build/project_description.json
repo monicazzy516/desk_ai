@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "desk_ai",
-    "project_version":    "1a45942-dirty",
+    "project_version":    "56d0774-dirty",
     "project_path":       "/Users/zhangziyu/Documents/desk_ai",
     "idf_path":           "/Users/zhangziyu/esp/esp-idf",
     "build_dir":          "/Users/zhangziyu/Documents/desk_ai/build",
@@ -1315,8 +1315,8 @@
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__esp_lcd_st77916", "espressif__esp_lcd_touch_cst816s", "espressif__esp_lvgl_port" ],
             "file": "/Users/zhangziyu/Documents/desk_ai/build/esp-idf/main/libmain.a",
-            "sources": [ "/Users/zhangziyu/Documents/desk_ai/main/desk_ai.c", "/Users/zhangziyu/Documents/desk_ai/main/audio.c", "/Users/zhangziyu/Documents/desk_ai/main/backend.c", "/Users/zhangziyu/Documents/desk_ai/main/state.c", "/Users/zhangziyu/Documents/desk_ai/main/ui.c", "/Users/zhangziyu/Documents/desk_ai/main/wifi.c" ],
-            "include_dirs": [ "." ]
+            "sources": [ "/Users/zhangziyu/Documents/desk_ai/main/desk_ai.c", "/Users/zhangziyu/Documents/desk_ai/main/audio.c", "/Users/zhangziyu/Documents/desk_ai/main/backend.c", "/Users/zhangziyu/Documents/desk_ai/main/state.c", "/Users/zhangziyu/Documents/desk_ai/main/ui.c", "/Users/zhangziyu/Documents/desk_ai/main/wifi.c", "/Users/zhangziyu/Documents/desk_ai/main/ui/background_img.c", "/Users/zhangziyu/Documents/desk_ai/main/ui/idle_img.c", "/Users/zhangziyu/Documents/desk_ai/main/ui/smile_img.c" ],
+            "include_dirs": [ ".", "ui" ]
         },
         "mbedtls": {
             "alias": "idf::mbedtls",
@@ -3016,7 +3016,7 @@
             "priv_reqs": [ "esp_timer", "espressif__esp_lcd_st77916", "espressif__esp_lcd_touch_cst816s", "espressif__esp_lvgl_port" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__esp_lcd_st77916", "espressif__esp_lcd_touch_cst816s", "espressif__esp_lvgl_port" ],
-            "include_dirs": [ "." ]
+            "include_dirs": [ ".", "ui" ]
         },
         "espressif__cmake_utilities": {
             "alias": "idf::espressif__cmake_utilities",

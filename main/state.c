@@ -20,6 +20,18 @@ static char last_reply_text[LAST_REPLY_TEXT_MAX];
 #define THINKING_MIN_DISPLAY_MS  300
 /** 上传后端最长等待：10s 超时，由 backend.c UPLOAD_TIMEOUT_MS 保证 */
 
+/** 音频播放完成回调：自动返回 IDLE 状态 */
+static void audio_play_done_callback(uint32_t samples, uint32_t sample_rate_hz)
+{
+    if (samples > 0 && sample_rate_hz > 0) {
+        float duration_sec = (float)samples / (float)sample_rate_hz;
+        ESP_LOGI(TAG, "audio play done: %.2f sec, auto return IDLE", duration_sec);
+    } else {
+        ESP_LOGI(TAG, "audio play failed, return IDLE");
+    }
+    set_state(STATE_IDLE);
+}
+
 static void thinking_task(void *arg)
 {
     (void)arg;
@@ -49,8 +61,9 @@ static void thinking_task(void *arg)
         if (last_user_text[0] != '\0') {
             ESP_LOGI(TAG, "user said: %s", last_user_text);
         }
-        ESP_LOGI(TAG, "THINKING: backend ok (click to SPEAKING)");
-        /* 不自动切 SPEAKING，等用户点击 */
+        ESP_LOGI(TAG, "THINKING: backend ok, auto switch to SPEAKING");
+        /* 自动切换到 SPEAKING 状态，开始播放音频 */
+        set_state(STATE_SPEAKING);
     } else {
         last_user_text[0] = '\0';
         last_reply_text[0] = '\0';
@@ -81,15 +94,17 @@ void set_state(device_state_t new_state)
         (void)xTaskCreate(thinking_task, "thinking", 4096, NULL, 4, NULL);
     }
     if (new_state == STATE_SPEAKING) {
-        /* 后端已不返回音频，仅在 UI 显示 reply_text；若有音频则播放 */
+        /* 获取后端返回的音频，若有则播放；播放完成后自动返回 IDLE */
         const int16_t *reply_pcm = NULL;
         uint32_t reply_samples = 0;
         uint32_t reply_rate = 0;
         backend_get_reply_audio(&reply_pcm, &reply_samples, &reply_rate);
         if (reply_pcm != NULL && reply_samples > 0 && reply_rate > 0) {
-            audio_play_pcm(reply_pcm, reply_samples, reply_rate);
+            audio_play_pcm(reply_pcm, reply_samples, reply_rate, audio_play_done_callback);
+        } else {
+            /* 无音频时，通过点击手动返回 IDLE */
+            ESP_LOGI(TAG, "SPEAKING: no audio, click to return IDLE");
         }
-        /* 无后端音频时不播放，UI 显示 last_reply_text */
     }
 }
 

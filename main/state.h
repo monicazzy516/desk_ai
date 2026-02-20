@@ -3,7 +3,7 @@
 typedef enum {
     STATE_IDLE = 0,
     STATE_LISTENING,
-    STATE_RECORDED,   /* 已停止录音，下次点击进入 THINKING */
+    STATE_RECORDED,   /* [已废弃] 保留以兼容旧代码，现在 LISTENING 直接进入 THINKING */
     STATE_THINKING,
     STATE_SPEAKING
 } device_state_t;

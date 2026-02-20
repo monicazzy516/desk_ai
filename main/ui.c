@@ -1,7 +1,11 @@
 #include "ui.h"
 #include "state.h"
 #include "audio.h"
+#include "background_img.h"
+#include "idle_img.h"
+#include "smile_img.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -34,6 +38,9 @@ static const char *TAG = "UI";
 
 static lv_display_t *disp_handle = NULL;
 static lv_obj_t *screen = NULL;
+static lv_obj_t *bg_img = NULL;        /* 背景图片对象 */
+static lv_obj_t *idle_obj = NULL;      /* 柴犬图片对象（IDLE/THINKING 状态显示）*/
+static lv_obj_t *smile_obj = NULL;     /* 笑脸柴犬图片对象（SPEAKING/LISTENING 状态显示）*/
 static lv_obj_t *state_label = NULL;   /* 当前 state 名称，便于 debug */
 static lv_obj_t *reply_label = NULL;   /* SPEAKING 时显示后端 reply_text */
 
@@ -116,7 +123,7 @@ void display_init(void)
         .color_format = LV_COLOR_FORMAT_RGB565,
         .flags = {
             .buff_dma = 1,
-            .swap_bytes = 0,
+            .swap_bytes = 1,  /* 交换字节序以修复颜色显示 */
         },
     };
     disp_handle = lvgl_port_add_disp(&disp_cfg);
@@ -159,27 +166,49 @@ void display_init(void)
     ESP_LOGI(TAG, "Display init done");
 }
 
+/** 双击检测：记录上次点击时间（微秒） */
+static int64_t last_click_time_us = 0;
+#define DOUBLE_CLICK_THRESHOLD_MS  500  /* 500ms 内连续点击视为双击 */
+
 static void screen_clicked_cb(lv_event_t *e)
 {
     (void)e;
     device_state_t cur = get_state();
+    
+    /* IDLE 状态：需要双击才能唤醒 LISTENING */
+    if (cur == STATE_IDLE) {
+        int64_t now_us = esp_timer_get_time();
+        int64_t delta_ms = (now_us - last_click_time_us) / 1000;
+        last_click_time_us = now_us;
+        
+        if (delta_ms > 0 && delta_ms < DOUBLE_CLICK_THRESHOLD_MS) {
+            /* 双击检测成功，进入 LISTENING */
+            ESP_LOGI(TAG, "Double click detected (%.0f ms), enter LISTENING", (float)delta_ms);
+            set_state(STATE_LISTENING);
+        } else {
+            /* 首次点击或间隔过长，等待第二次点击 */
+            ESP_LOGI(TAG, "First click, waiting for double click...");
+        }
+        return;
+    }
+    
+    /* 其他状态：单击处理 */
     switch (cur) {
-    case STATE_IDLE:
-        set_state(STATE_LISTENING);
-        break;
     case STATE_LISTENING: {
         audio_stop_listening();
         (void)audio_wait_record_done(2000);
-        set_state(STATE_RECORDED);
+        set_state(STATE_THINKING);  /* 直接进入 THINKING，跳过 RECORDED */
         break;
     }
     case STATE_RECORDED:
+        /* RECORDED 状态已废弃，直接跳转到 THINKING */
         set_state(STATE_THINKING);
         break;
     case STATE_THINKING:
-        set_state(STATE_SPEAKING);
+        /* THINKING 会自动切换到 SPEAKING，用户点击无效 */
         break;
     case STATE_SPEAKING:
+        /* SPEAKING 播放音频完成后会自动返回 IDLE，但允许用户点击提前中断 */
         set_state(STATE_IDLE);
         break;
     default:
@@ -195,12 +224,41 @@ void ui_init(void)
     }
     lvgl_port_lock(0);
     screen = lv_display_get_screen_active(disp_handle);
+    
+    /* 设置黑色背景（作为图片后面的底色） */
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+    
+    /* 创建背景图片 */
+    bg_img = lv_img_create(screen);
+    lv_img_set_src(bg_img, &background_img);
+    lv_obj_align(bg_img, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(bg_img, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
+    
+    /* 创建柴犬图片（叠加在背景上，只在 IDLE/THINKING 显示）*/
+    idle_obj = lv_img_create(screen);
+    lv_img_set_src(idle_obj, &idle_img);
+    lv_obj_align(idle_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(idle_obj, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
+    lv_obj_add_flag(idle_obj, LV_OBJ_FLAG_HIDDEN);  /* 初始隐藏 */
+    
+    /* 创建笑脸柴犬图片（叠加在背景上，只在 SPEAKING/LISTENING 显示）*/
+    smile_obj = lv_img_create(screen);
+    lv_img_set_src(smile_obj, &smile_img);
+    lv_obj_align(smile_obj, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_clear_flag(smile_obj, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
+    lv_obj_add_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);  /* 初始隐藏 */
+    
+    /* 屏幕点击事件（在图片之上） */
     lv_obj_add_event_cb(screen, screen_clicked_cb, LV_EVENT_CLICKED, NULL);
+    
+    /* 状态标签 */
     state_label = lv_label_create(screen);
     lv_obj_set_style_text_color(state_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(state_label, &lv_font_montserrat_14, 0);
     lv_label_set_text(state_label, "IDLE");
     lv_obj_align(state_label, LV_ALIGN_TOP_MID, 0, 12);
+    
+    /* 回复文本标签 */
     reply_label = lv_label_create(screen);
     lv_obj_set_style_text_color(reply_label, lv_color_hex(0x000000), 0);
     lv_obj_set_style_text_font(reply_label, &lv_font_montserrat_14, 0);
@@ -209,8 +267,9 @@ void ui_init(void)
     lv_obj_align(reply_label, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_text(reply_label, "");
     lv_obj_add_flag(reply_label, LV_OBJ_FLAG_HIDDEN);
+    
     lvgl_port_unlock();
-    ESP_LOGI(TAG, "UI init (click: IDLE->LISTENING->RECORDED->THINKING->SPEAKING->IDLE)");
+    ESP_LOGI(TAG, "UI init with background image (IDLE -[double click]-> LISTENING -> THINKING -> auto SPEAKING -> auto IDLE)");
 }
 
 void ui_update(device_state_t state)
@@ -218,42 +277,59 @@ void ui_update(device_state_t state)
     if (screen == NULL) {
         return;
     }
-    lv_color_t color;
+    lv_color_t text_color;
     const char *state_name;
     switch (state) {
         case STATE_IDLE:
-            color = lv_color_hex(0x000000);
+            text_color = lv_color_hex(0xFFFFFF);  /* 白色 */
             state_name = "IDLE";
             break;
         case STATE_LISTENING:
-            color = lv_color_hex(0x0066CC);  /* 蓝 */
+            text_color = lv_color_hex(0x00CCFF);  /* 亮蓝 */
             state_name = "LISTENING";
             break;
         case STATE_RECORDED:
-            color = lv_color_hex(0x00AA88);  /* 青绿 */
+            text_color = lv_color_hex(0x00FF88);  /* 亮青绿 */
             state_name = "RECORDED";
             break;
         case STATE_THINKING:
-            color = lv_color_hex(0xCCAA00);  /* 黄 */
+            text_color = lv_color_hex(0xFFDD00);  /* 亮黄 */
             state_name = "THINKING";
             break;
         case STATE_SPEAKING:
-            color = lv_color_hex(0xFFFFFF);  /* 白 */
+            text_color = lv_color_hex(0xFF88FF);  /* 亮粉红 */
             state_name = "SPEAKING";
             break;
         default:
-            color = lv_color_hex(0x000000);
+            text_color = lv_color_hex(0xFFFFFF);
             state_name = "?";
             break;
     }
     lvgl_port_lock(0);
-    lv_obj_set_style_bg_color(screen, color, 0);
+    /* 不再修改背景颜色，背景始终是图片 */
     if (state_label != NULL) {
         lv_label_set_text(state_label, state_name);
-        lv_color_t text_color = (state == STATE_IDLE || state == STATE_LISTENING || state == STATE_RECORDED)
-            ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x000000);
         lv_obj_set_style_text_color(state_label, text_color, 0);
     }
+    
+    /* 柴犬图片：只在 IDLE 和 THINKING 状态显示 */
+    if (idle_obj != NULL) {
+        if (state == STATE_IDLE || state == STATE_THINKING) {
+            lv_obj_clear_flag(idle_obj, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(idle_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    
+    /* 笑脸柴犬图片：只在 SPEAKING 和 LISTENING 状态显示 */
+    if (smile_obj != NULL) {
+        if (state == STATE_SPEAKING || state == STATE_LISTENING) {
+            lv_obj_clear_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    
     if (reply_label != NULL) {
         if (state == STATE_SPEAKING) {
             const char *txt = state_get_last_reply_text();

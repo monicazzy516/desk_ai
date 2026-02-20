@@ -18,7 +18,7 @@ static const char *TAG = "BACKEND";
 #define FAKE_BODY "{\"fake\":\"hello from esp32\"}"
 #define RESP_BUF_SIZE 256
 #define UPLOAD_URL_MAX 128
-#define UPLOAD_BODY_BUF_SIZE  (32 * 1024)   /* 静态 buffer 大小，不占堆；后端假音频 0.5s 约 17KB */
+#define UPLOAD_BODY_BUF_SIZE  (256 * 1024)   /* 256KB: 支持 ~5s TTS 音频 (24kHz * 2 bytes * 5s = 240KB) + JSON */
 /** 上传后端最长等待时间（ms），超时则 backend_send_pcm 返回 false */
 #define UPLOAD_TIMEOUT_MS  60000  /* 长录音 + Whisper+LLM 较慢，60s */
 
@@ -86,7 +86,7 @@ bool backend_send_fake_data(void)
 /* 用于 /upload 响应：body = 纯 JSON（ok, user_text, reply_text），无音频 */
 #define REPLY_TEXT_MAX 192
 static bool s_upload_response_ok;
-static uint8_t s_upload_body_buf[UPLOAD_BODY_BUF_SIZE];  /* 静态，不占堆 */
+static uint8_t *s_upload_body_buf = NULL;  /* 动态分配（PSRAM），首次使用时分配 */
 static size_t s_upload_body_len;
 static int16_t *s_reply_pcm;           /* 无音频时为 NULL */
 static uint32_t s_reply_pcm_samples;
@@ -97,7 +97,7 @@ static char s_reply_reply_text[REPLY_TEXT_MAX]; /* reply_text（LLM），供 UI 
 /** 解析已收到的 response body（纯 JSON 或 JSON+\\n+PCM），设置 s_upload_response_ok 等 */
 static void parse_upload_response_body(void)
 {
-    if (s_upload_body_len == 0) {
+    if (s_upload_body_len == 0 || s_upload_body_buf == NULL) {
         return;
     }
     uint8_t *p = s_upload_body_buf;
@@ -260,6 +260,21 @@ bool backend_send_pcm(const int16_t *pcm, uint32_t samples, uint32_t sample_rate
     if (pcm == NULL || samples == 0) {
         ESP_LOGW(TAG, "no pcm data, skip upload");
         return false;
+    }
+
+    /* 首次使用时分配缓冲区（优先 PSRAM） */
+    if (s_upload_body_buf == NULL) {
+        s_upload_body_buf = (uint8_t *)heap_caps_malloc(UPLOAD_BODY_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        if (s_upload_body_buf == NULL) {
+            ESP_LOGE(TAG, "upload_body_buf alloc PSRAM failed (%u bytes), try internal", (unsigned)UPLOAD_BODY_BUF_SIZE);
+            s_upload_body_buf = (uint8_t *)heap_caps_malloc(UPLOAD_BODY_BUF_SIZE, MALLOC_CAP_INTERNAL);
+        }
+        if (s_upload_body_buf == NULL) {
+            ESP_LOGE(TAG, "upload_body_buf alloc failed");
+            return false;
+        }
+        ESP_LOGI(TAG, "upload_body_buf %u bytes allocated in %s", (unsigned)UPLOAD_BODY_BUF_SIZE,
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM) ? "PSRAM" : "internal");
     }
 
     char upload_url[UPLOAD_URL_MAX];

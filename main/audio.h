@@ -24,10 +24,17 @@ bool audio_wait_record_done(uint32_t timeout_ms);
 void audio_play_recorded(void);
 
 /**
+ * 播放完成回调函数类型。
+ * 参数：samples = 实际播放的采样数，sample_rate_hz = 采样率。
+ */
+typedef void (*audio_play_done_cb_t)(uint32_t samples, uint32_t sample_rate_hz);
+
+/**
  * 播放指定 PCM 缓冲区（int16 单声道），使用给定采样率。
  * 在独立任务中执行；pcm 指针在播放完成前必须有效。
+ * done_cb: 播放完成后的回调函数（可选，NULL 表示不回调）。
  */
-void audio_play_pcm(const int16_t *pcm, uint32_t samples, uint32_t sample_rate_hz);
+void audio_play_pcm(const int16_t *pcm, uint32_t samples, uint32_t sample_rate_hz, audio_play_done_cb_t done_cb);
 
 /**
  * 获取最近一次录音的 PCM 缓冲区与采样数（只读，下次 LISTENING 前有效）。

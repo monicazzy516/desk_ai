@@ -6,8 +6,12 @@ idf_component_register(
         "state.c"
         "ui.c"
         "wifi.c"
+        "ui/background_img.c"
+        "ui/idle_img.c"
+        "ui/smile_img.c"
     INCLUDE_DIRS
         "."
+        "ui"
     REQUIRES
         esp_lcd_st77916
         esp_lvgl_port
