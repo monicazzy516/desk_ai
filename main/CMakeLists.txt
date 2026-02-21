@@ -9,6 +9,8 @@ idf_component_register(
         "ui/background_img.c"
         "ui/idle_img.c"
         "ui/smile_img.c"
+        "ui/hand_img.c"
+        "ui/heart_img.c"
     INCLUDE_DIRS
         "."
         "ui"

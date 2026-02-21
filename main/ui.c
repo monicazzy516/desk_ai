@@ -4,6 +4,8 @@
 #include "background_img.h"
 #include "idle_img.h"
 #include "smile_img.h"
+#include "hand_img.h"
+#include "heart_img.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/spi_master.h"
@@ -41,8 +43,11 @@ static lv_obj_t *screen = NULL;
 static lv_obj_t *bg_img = NULL;        /* 背景图片对象 */
 static lv_obj_t *idle_obj = NULL;      /* 柴犬图片对象（IDLE/THINKING 状态显示）*/
 static lv_obj_t *smile_obj = NULL;     /* 笑脸柴犬图片对象（SPEAKING/LISTENING 状态显示）*/
+static lv_obj_t *hand_obj = NULL;      /* 手指图标对象（IDLE 状态抚摸交互显示）*/
+static lv_obj_t *heart_obj = NULL;     /* 爱心图标对象（IDLE 状态抚摸交互显示）*/
 static lv_obj_t *state_label = NULL;   /* 当前 state 名称，便于 debug */
 static lv_obj_t *reply_label = NULL;   /* SPEAKING 时显示后端 reply_text */
+static lv_timer_t *petting_smile_timer = NULL;  /* 抚摸后笑脸持续定时器 */
 
 static bool panel_io_cb(esp_lcd_panel_io_handle_t panel_io,
                         esp_lcd_panel_io_event_data_t *edata,
@@ -170,13 +175,89 @@ void display_init(void)
 static int64_t last_click_time_us = 0;
 #define DOUBLE_CLICK_THRESHOLD_MS  500  /* 500ms 内连续点击视为双击 */
 
-static void screen_clicked_cb(lv_event_t *e)
+/** 抚摸后笑脸持续定时器回调：1秒后切换回 idle */
+static void petting_smile_timer_cb(lv_timer_t *timer)
 {
-    (void)e;
+    (void)timer;
     device_state_t cur = get_state();
     
-    /* IDLE 状态：需要双击才能唤醒 LISTENING */
+    /* 只在 IDLE 状态下切换回 idle 表情 */
     if (cur == STATE_IDLE) {
+        if (idle_obj != NULL) {
+            lv_obj_clear_flag(idle_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (smile_obj != NULL) {
+            lv_obj_add_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        ESP_LOGI(TAG, "Petting smile timeout, switch back to idle");
+    }
+    
+    /* 删除定时器 */
+    if (petting_smile_timer != NULL) {
+        lv_timer_del(petting_smile_timer);
+        petting_smile_timer = NULL;
+    }
+}
+
+static void screen_clicked_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    device_state_t cur = get_state();
+    
+    /* IDLE 状态下的抚摸交互：滑动时显示手指图标、爱心并立即切换到笑脸 */
+    if (cur == STATE_IDLE && code == LV_EVENT_PRESSING) {
+        /* 获取触摸点坐标 */
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev && hand_obj != NULL) {
+            lv_point_t point;
+            lv_indev_get_point(indev, &point);
+            
+            /* 显示手指图标并移动到触摸点 */
+            lv_obj_clear_flag(hand_obj, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_pos(hand_obj, point.x - 60, point.y - 60);  /* 居中显示（120x120图标）*/
+            
+            /* 显示爱心图标（居中靠上，固定位置）*/
+            if (heart_obj != NULL) {
+                lv_obj_clear_flag(heart_obj, LV_OBJ_FLAG_HIDDEN);
+            }
+            
+            /* 立即切换到 smile 表情 */
+            if (idle_obj != NULL) {
+                lv_obj_add_flag(idle_obj, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (smile_obj != NULL) {
+                lv_obj_clear_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        return;
+    }
+    
+    /* IDLE 状态下的抚摸交互：停止滑动后隐藏爱心，保持笑脸1秒 */
+    if (cur == STATE_IDLE && code == LV_EVENT_RELEASED) {
+        /* 隐藏手指图标和爱心图标 */
+        if (hand_obj != NULL) {
+            lv_obj_add_flag(hand_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (heart_obj != NULL) {
+            lv_obj_add_flag(heart_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        /* smile 表情保持显示，1秒后切换回 idle */
+        /* 删除之前的定时器（如果存在）*/
+        if (petting_smile_timer != NULL) {
+            lv_timer_del(petting_smile_timer);
+        }
+        
+        /* 创建新定时器：1秒后切换回 idle */
+        petting_smile_timer = lv_timer_create(petting_smile_timer_cb, 1000, NULL);
+        lv_timer_set_repeat_count(petting_smile_timer, 1);
+        
+        ESP_LOGI(TAG, "Petting stopped, keep smile for 1s");
+        return;
+    }
+    
+    /* IDLE 状态下的点击事件：需要双击才能唤醒 LISTENING */
+    if (cur == STATE_IDLE && code == LV_EVENT_CLICKED) {
         int64_t now_us = esp_timer_get_time();
         int64_t delta_ms = (now_us - last_click_time_us) / 1000;
         last_click_time_us = now_us;
@@ -193,26 +274,28 @@ static void screen_clicked_cb(lv_event_t *e)
     }
     
     /* 其他状态：单击处理 */
-    switch (cur) {
-    case STATE_LISTENING: {
-        audio_stop_listening();
-        (void)audio_wait_record_done(2000);
-        set_state(STATE_THINKING);  /* 直接进入 THINKING，跳过 RECORDED */
-        break;
-    }
-    case STATE_RECORDED:
-        /* RECORDED 状态已废弃，直接跳转到 THINKING */
-        set_state(STATE_THINKING);
-        break;
-    case STATE_THINKING:
-        /* THINKING 会自动切换到 SPEAKING，用户点击无效 */
-        break;
-    case STATE_SPEAKING:
-        /* SPEAKING 播放音频完成后会自动返回 IDLE，但允许用户点击提前中断 */
-        set_state(STATE_IDLE);
-        break;
-    default:
-        break;
+    if (code == LV_EVENT_CLICKED) {
+        switch (cur) {
+        case STATE_LISTENING: {
+            audio_stop_listening();
+            (void)audio_wait_record_done(2000);
+            set_state(STATE_THINKING);  /* 直接进入 THINKING，跳过 RECORDED */
+            break;
+        }
+        case STATE_RECORDED:
+            /* RECORDED 状态已废弃，直接跳转到 THINKING */
+            set_state(STATE_THINKING);
+            break;
+        case STATE_THINKING:
+            /* THINKING 会自动切换到 SPEAKING，用户点击无效 */
+            break;
+        case STATE_SPEAKING:
+            /* SPEAKING 播放音频完成后会自动返回 IDLE，但允许用户点击提前中断 */
+            set_state(STATE_IDLE);
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -248,8 +331,23 @@ void ui_init(void)
     lv_obj_clear_flag(smile_obj, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
     lv_obj_add_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);  /* 初始隐藏 */
     
-    /* 屏幕点击事件（在图片之上） */
+    /* 创建手指图标（IDLE 状态抚摸交互时显示）*/
+    hand_obj = lv_img_create(screen);
+    lv_img_set_src(hand_obj, &hand_img);
+    lv_obj_clear_flag(hand_obj, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
+    lv_obj_add_flag(hand_obj, LV_OBJ_FLAG_HIDDEN);  /* 初始隐藏 */
+    
+    /* 创建爱心图标（IDLE 状态抚摸交互时显示，居中靠上）*/
+    heart_obj = lv_img_create(screen);
+    lv_img_set_src(heart_obj, &heart_img);
+    lv_obj_align(heart_obj, LV_ALIGN_TOP_MID, 0, 50);  /* 居中靠上，距离顶部60px */
+    lv_obj_clear_flag(heart_obj, LV_OBJ_FLAG_CLICKABLE);  /* 图片不响应点击 */
+    lv_obj_add_flag(heart_obj, LV_OBJ_FLAG_HIDDEN);  /* 初始隐藏 */
+    
+    /* 屏幕交互事件（在图片之上） */
     lv_obj_add_event_cb(screen, screen_clicked_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(screen, screen_clicked_cb, LV_EVENT_PRESSING, NULL);  /* 滑动抚摸 */
+    lv_obj_add_event_cb(screen, screen_clicked_cb, LV_EVENT_RELEASED, NULL);  /* 停止抚摸 */
     
     /* 状态标签 */
     state_label = lv_label_create(screen);
@@ -328,6 +426,22 @@ void ui_update(device_state_t state)
         } else {
             lv_obj_add_flag(smile_obj, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+    
+    /* 手指图标和爱心图标：状态切换时隐藏（只在 IDLE 抚摸时显示）*/
+    if (state != STATE_IDLE) {
+        if (hand_obj != NULL) {
+            lv_obj_add_flag(hand_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (heart_obj != NULL) {
+            lv_obj_add_flag(heart_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    
+    /* 取消抚摸笑脸定时器（如果离开 IDLE 状态）*/
+    if (state != STATE_IDLE && petting_smile_timer != NULL) {
+        lv_timer_del(petting_smile_timer);
+        petting_smile_timer = NULL;
     }
     
     if (reply_label != NULL) {
